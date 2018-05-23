@@ -3,7 +3,6 @@ package dsig
 import (
 	"crypto"
 	"crypto/rand"
-	"crypto/rsa"
 	_ "crypto/sha1"
 	_ "crypto/sha256"
 	"encoding/base64"
@@ -30,6 +29,10 @@ func NewDefaultSigningContext(ks X509KeyStore) *SigningContext {
 		Prefix:        DefaultPrefix,
 		Canonicalizer: MakeC14N11Canonicalizer(),
 	}
+}
+
+func (ctx *SigningContext) HashFunc() crypto.Hash {
+	return ctx.Hash
 }
 
 func (ctx *SigningContext) SetSignatureMethod(algorithmID string) error {
@@ -184,7 +187,11 @@ func (ctx *SigningContext) ConstructSignature(el *etree.Element, enveloped bool)
 		}
 	}
 
-	rawSignature, err := rsa.SignPKCS1v15(rand.Reader, key, ctx.Hash, digest)
+	k, ok := key.(crypto.Signer)
+	if !ok {
+		return nil, errors.New("key does not implement crypto.Signer interface")
+	}
+	rawSignature, err := k.Sign(rand.Reader, digest, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -246,10 +253,16 @@ func (ctx *SigningContext) SignString(content string) ([]byte, error) {
 	}
 	digest := hash.Sum(nil)
 
-	var signature []byte
-	if key, _, err := ctx.KeyStore.GetKeyPair(); err != nil {
+	key, _, err := ctx.KeyStore.GetKeyPair()
+	if err != nil {
 		return nil, fmt.Errorf("unable to fetch key for signing: %v", err)
-	} else if signature, err = rsa.SignPKCS1v15(rand.Reader, key, ctx.Hash, digest); err != nil {
+	}
+	k, ok := key.(crypto.Signer)
+	if !ok {
+		return nil, fmt.Errorf("private key does not implement crypto.Signer interface")
+	}
+	signature, err := k.Sign(rand.Reader, digest, ctx)
+	if err != nil {
 		return nil, fmt.Errorf("error signing: %v", err)
 	}
 	return signature, nil
